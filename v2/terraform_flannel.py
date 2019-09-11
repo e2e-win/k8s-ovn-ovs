@@ -7,6 +7,7 @@ import terraform
 import shutil
 import yaml
 import json
+import glob
 
 p = configargparse.get_argument_parser()
 
@@ -147,17 +148,10 @@ class Terraform_Flannel(ci.CI):
 
         full_ansible_tmp_path = os.path.join(self.ansible_playbook_root, "tmp")
         utils.mkdir_p(full_ansible_tmp_path)
-        # Copy kubernetes prebuilt binaries
-        for file in ["kubelet","kubectl","kube-apiserver","kube-controller-manager","kube-scheduler","kube-proxy"]:
-            full_file_path = os.path.join(utils.get_k8s_folder(), constants.KUBERNETES_LINUX_BINS_LOCATION, file)
-            self.logging.info("Copying %s to %s." % (full_file_path, full_ansible_tmp_path))
-            shutil.copy(full_file_path, full_ansible_tmp_path)
-
-        for file in ["kubelet.exe", "kubectl.exe", "kube-proxy.exe"]:
-            full_file_path = os.path.join(utils.get_k8s_folder(), constants.KUBERNETES_WINDOWS_BINS_LOCATION, file)
-            self.logging.info("Copying %s to %s." % (full_file_path, full_ansible_tmp_path))
-            shutil.copy(full_file_path, full_ansible_tmp_path)
-
+        # Copy prebuilt binaries to ansible tmp
+        for path in glob.glob("%s/*" % utils.get_bins_path()):
+            self.logging.info("Copying %s to %s." % (path, full_ansible_tmp_path))
+            shutil.copy(path, full_ansible_tmp_path)
 
         azure_ccm = "false"
         # Generate azure.json if needed and populate group vars with necessary paths
@@ -330,10 +324,33 @@ class Terraform_Flannel(ci.CI):
 
         self._prepullImages(self.opts.containerRuntime)
 
-    def build(self):
-        self.logging.info("Building k8s binaries.")
-        utils.get_k8s(repo=self.opts.k8s_repo, branch=self.opts.k8s_branch)
+    def _build_k8s_binaries(self):
+        k8s_path = utils.get_k8s_folder()
+        utils.clone_repo(self.opts.k8s_repo, self.opts.k8s_branch, k8s_path)
         utils.build_k8s_binaries()
+
+    def _build_containerd_binaries(self):
+        containerd_path = utils.get_containerd_folder()
+        utils.clone_repo(self.opts.containerd_repo, self.opts.containerd_branch, containerd_path)
+        utils.build_containerd_binaries()
+
+    def _build_sdn_binaries(self):
+        sdn_path = utils.get_sdn_folder()
+        utils.clone_repo(self.opts.sdn_repo, self.opts.sdn_branch, sdn_path)
+        utils.build_sdn_binaries()
+
+    def build(self, binsToBuild):
+        builder_mapping = {
+            "k8sbins": self._build_k8s_binaries,
+            "containerdbins": self._build_containerd_binaries,
+            "sdnbins": self._build_sdn_binaries
+        }
+        def noop_func():
+            pass
+        
+        for bins in binsToBuild:
+            self.logging.info("Building %s binaries." % bins)
+            builder_mapping.get(bins, noop_func)()
 
     def up(self):
         self.logging.info("Bringing cluster up.")
